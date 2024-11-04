@@ -1,0 +1,39 @@
+[package]
+name = "mumblebot"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+opt-level = 2
+
+[dependencies]
+prost = "0.13.3"
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+num-traits = "0.2"
+num-derive = "0.4"
+opus = "0.3"
+
+librespot = "0.6.0"
+env_logger = { version = "0.9", default-features = false, features = [
+    "termcolor",
+    "humantime",
+    "atty",
+] }
+rubato = "0.16"
+strided = "0.2.9"
+log = "*"
+
+anyhow = "*"
+webpki-roots = "0.26.6"
+serde_json = "1.0.132"
+serde = "1.0.214"
+tokio-util = "0.7.12"
+
+rspotify = { version = "0.13", features = [
+    "client-reqwest",
+    "reqwest-rustls-tls",
+] }
+
+[build-dependencies]
+prost-build = "0.13.3"
