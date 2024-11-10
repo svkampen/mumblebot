@@ -1,5 +1,6 @@
 mod resampling_sink;
 
+use futures::{pin_mut, TryStreamExt};
 use librespot::{
     core::{cache::Cache, Session, SessionConfig, SpotifyId},
     discovery::Credentials,
@@ -12,23 +13,20 @@ use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
 use rspotify::{
-    model::{Country, Market, SearchResult},
+    model::{AlbumId, Country, Id, Market, PlayableItem, PlaylistId, SearchResult, TrackId},
     prelude::BaseClient,
 };
 
 use std::path::PathBuf;
 
-use crate::types::Config;
+use crate::types::{Config, Song};
 
 const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 const SPOTIFY_REDIR_URI: &str = "http://127.0.0.1:8898/login";
 
 use rspotify::model::SearchType;
 
-pub async fn search_song(
-    config: &Config,
-    query: &str,
-) -> anyhow::Result<Vec<rspotify::model::FullTrack>> {
+async fn get_rspotify_session(config: &Config) -> anyhow::Result<rspotify::ClientCredsSpotify> {
     let creds =
         rspotify::Credentials::new(&config.rspotify_client_id, &config.rspotify_client_secret);
 
@@ -40,6 +38,32 @@ pub async fn search_song(
     let spot = rspotify::ClientCredsSpotify::with_config(creds, cfg);
 
     spot.request_token().await?;
+
+    Ok(spot)
+}
+
+impl Into<Song> for rspotify::model::FullTrack {
+    fn into(self) -> Song {
+        Song {
+            name: format!("{} - {}", self.artists[0].name, self.name),
+            id: self.id.unwrap().uri(),
+            song_type: crate::types::SongType::SPOTIFY,
+        }
+    }
+}
+
+impl Into<Song> for rspotify::model::SimplifiedTrack {
+    fn into(self) -> Song {
+        Song {
+            name: format!("{} - {}", self.artists[0].name, self.name),
+            id: self.id.unwrap().uri(),
+            song_type: crate::types::SongType::SPOTIFY,
+        }
+    }
+}
+
+pub async fn search_song(config: &Config, query: &str) -> anyhow::Result<Vec<Song>> {
+    let spot = get_rspotify_session(config).await?;
 
     let res = spot
         .search(
@@ -53,12 +77,58 @@ pub async fn search_song(
         .await?;
 
     match res {
-        SearchResult::Tracks(tracks) => Ok(tracks.items),
+        SearchResult::Tracks(tracks) => {
+            let songs = tracks.items.into_iter().map(|ti| ti.into()).collect();
+            Ok(songs)
+        }
         _ => {
             debug!("No tracks found for search term {:?}", query);
             Ok(Vec::new())
         }
     }
+}
+
+pub async fn get_track_by_id(config: &Config, track_uri: &str) -> anyhow::Result<Song> {
+    let spot = get_rspotify_session(config).await?;
+
+    let track_info = spot.track(TrackId::from_uri(track_uri)?, None).await?;
+
+    Ok(track_info.into())
+}
+
+pub async fn get_playlist_tracks_by_id(
+    config: &Config,
+    playlist_uri: &str,
+) -> anyhow::Result<Vec<Song>> {
+    let spot = get_rspotify_session(config).await?;
+
+    let playlist_info = spot.playlist_items(PlaylistId::from_uri(playlist_uri)?, None, None);
+    pin_mut!(playlist_info);
+
+    let mut tracks = vec![];
+
+    while let Some(item) = playlist_info.try_next().await? {
+        if let Some(PlayableItem::Track(track)) = item.track {
+            tracks.push(track.into());
+        }
+    }
+
+    Ok(tracks)
+}
+
+pub async fn get_album_tracks_by_id(config: &Config, album_uri: &str) -> anyhow::Result<Vec<Song>> {
+    let spot = get_rspotify_session(config).await?;
+
+    let album_info = spot.album_track(AlbumId::from_uri(album_uri)?, None);
+    pin_mut!(album_info);
+
+    let mut tracks = vec![];
+
+    while let Some(track) = album_info.try_next().await? {
+        tracks.push(track.into());
+    }
+
+    Ok(tracks)
 }
 
 async fn get_session() -> Session {

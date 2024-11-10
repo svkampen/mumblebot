@@ -98,10 +98,14 @@ async fn player_task(
                         }
                     },
                     PlayerAction::ShowQueue => {
-                        let mut output = String::from("<b>Songs in queue:</b><br/>");
-                        for song in queue.iter() {
-                            output.push_str("<br/>");
+                        let mut output = String::from("Songs in queue: ");
+                        for (i, song) in queue.iter().enumerate()
+                        {
                             output.push_str(&song.name);
+                            if i != queue.len() - 1
+                            {
+                                output.push_str(", ");
+                            }
                         }
 
                         net::send_text_message(&msg_sender, &output).await?;
@@ -137,6 +141,31 @@ async fn player_task(
     }
 }
 
+const SPOTIFY_TRACK_URL_BASE: &str = "";
+const SPOTIFY_PLAYLIST_URL_BASE: &str = "https://open.spotify.com/playlist/";
+
+fn tag_stripper(input: &str) -> String {
+    let mut output = String::new();
+
+    let mut within_tag = false;
+
+    for c in input.chars() {
+        if c == '<' {
+            within_tag = true;
+        }
+
+        if !within_tag {
+            output.push(c);
+        }
+
+        if c == '>' {
+            within_tag = false;
+        }
+    }
+
+    output
+}
+
 async fn handle_message(
     msg: &MumbleMsg,
     queue_sink: &mpsc::Sender<PlayerAction>,
@@ -150,17 +179,47 @@ async fn handle_message(
                     queue_sink.send(PlayerAction::Stop).await?;
                 }
                 ".sp" => {
+                    let arg = tag_stripper(arg);
                     if !arg.is_empty() {
-                        let songs = spotify::search_song(cfg, arg).await?;
-                        if !songs.is_empty() {
-                            let track = &songs[0];
+                        let song = if arg.starts_with(SPOTIFY_TRACK_URL_BASE) {
+                            let rest = &arg[SPOTIFY_TRACK_URL_BASE.len()..];
 
-                            let song = Song {
-                                name: format!("{} - {}", track.artists[0].name, track.name),
-                                id: track.id.as_ref().unwrap().uri(),
-                                song_type: types::SongType::SPOTIFY,
+                            let track_id = if let Some(idx) = rest.find('?') {
+                                &rest[..idx]
+                            } else {
+                                rest
                             };
 
+                            let uri = format!("spotify:track:{}", track_id);
+                            debug!("Loading track by URI: {}", uri);
+
+                            let song = spotify::get_track_by_id(cfg, &uri).await?;
+
+                            Some(song)
+                        } else {
+                            spotify::search_song(cfg, &arg).await?.first().cloned()
+                        };
+
+                        if let Some(song) = song {
+                            queue_sink.send(PlayerAction::PlaySong(song)).await?;
+                        }
+                    }
+                }
+                ".spplaylist" => {
+                    let arg = tag_stripper(arg);
+                    if arg.starts_with(SPOTIFY_PLAYLIST_URL_BASE) {
+                        let playlist_id = if let Some(idx) = arg.find('?') {
+                            &arg[SPOTIFY_PLAYLIST_URL_BASE.len()..idx]
+                        } else {
+                            &arg[SPOTIFY_PLAYLIST_URL_BASE.len()..]
+                        };
+
+                        let uri = format!("spotify:playlist:{}", playlist_id);
+                        debug!("Loading tracks in playlist: {}", uri);
+
+                        let songs = spotify::get_playlist_tracks_by_id(cfg, &uri).await?;
+
+                        for song in songs {
                             queue_sink.send(PlayerAction::PlaySong(song)).await?;
                         }
                     }
