@@ -1,0 +1,7 @@
+{
+    "host": "example.org",
+    "port": 64738,
+    "username": "Mumblebot",
+    "rspotify_client_id": "id",
+    "rspotify_client_secret": "secret"
+}
