@@ -141,7 +141,7 @@ async fn player_task(
     }
 }
 
-const SPOTIFY_TRACK_URL_BASE: &str = "";
+const SPOTIFY_TRACK_URL_BASE: &str = "https://open.spotify.com/track/";
 const SPOTIFY_PLAYLIST_URL_BASE: &str = "https://open.spotify.com/playlist/";
 
 fn tag_stripper(input: &str) -> String {
@@ -264,7 +264,9 @@ async fn handle_message(
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
 
     let cfg = load_config("config.json").expect("config file");
 
