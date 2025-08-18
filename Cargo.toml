@@ -14,7 +14,7 @@ num-traits = "0.2"
 num-derive = "0.4"
 opus = "0.3"
 
-librespot = "0.6.0"
+librespot = { git = "https://github.com/librespot-org/librespot", rev = "9456a02" }
 env_logger = { version = "0.9", default-features = false, features = [
     "termcolor",
     "humantime",

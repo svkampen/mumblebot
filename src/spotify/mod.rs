@@ -140,10 +140,21 @@ async fn get_session() -> Session {
     let creds = match cache.credentials() {
         Some(creds) => creds,
         None => {
-            let tok =
-                librespot::oauth::get_access_token(SPOTIFY_CLIENT_ID, SPOTIFY_REDIR_URI, scopes)
-                    .expect("got access token");
-            Credentials::with_access_token(tok.access_token)
+            let client = librespot::oauth::OAuthClientBuilder::new(
+                SPOTIFY_CLIENT_ID,
+                SPOTIFY_REDIR_URI,
+                scopes,
+            )
+            .open_in_browser()
+            .build()
+            .expect("got client");
+
+            Credentials::with_access_token(
+                client
+                    .get_access_token()
+                    .expect("got access token")
+                    .access_token,
+            )
         }
     };
 
@@ -151,7 +162,7 @@ async fn get_session() -> Session {
     session
         .connect(creds, true)
         .await
-        .expect("Unable to connect to the spotify Servers.");
+        .expect("Connection to Spotify servers");
 
     return session;
 }
