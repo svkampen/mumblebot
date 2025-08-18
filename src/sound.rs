@@ -103,11 +103,10 @@ impl AudioSender {
 
         debug!("Send task starting...");
 
-        // pre-buffer the first couple of minutes
-        // this takes roughly no time (on a reasonable connection).
+        // pre-buffer the first thirty seconds
         {
             let mut data = data.lock().await;
-            while data.buf.len() < 48_000 * 300 * 2 {
+            while data.buf.len() < 48_000 * 30 * 2 {
                 let chunk = data.source.as_mut().unwrap().recv().await;
 
                 if let Some(chunk) = chunk {
