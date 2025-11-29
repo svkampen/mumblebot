@@ -32,7 +32,7 @@ pub enum PlayerAction {
 
 #[derive(Debug, Clone)]
 pub enum SongType {
-    SPOTIFY,
+    Spotify,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ pub enum MumbleType {
     BanList,
     TextMessage,
     PermissionDenied,
-    ACL,
+    Acl,
     QueryUsers,
     CryptSetup,
     ContextActionModify,
@@ -155,7 +155,7 @@ pub enum MumbleMsg {
     BanList(mumble_proto::BanList),
     TextMessage(mumble_proto::TextMessage),
     PermissionDenied(mumble_proto::PermissionDenied),
-    ACL(mumble_proto::Acl),
+    Acl(mumble_proto::Acl),
     QueryUsers(mumble_proto::QueryUsers),
     CryptSetup(mumble_proto::CryptSetup),
     ContextActionModify(mumble_proto::ContextActionModify),
@@ -186,7 +186,7 @@ impl MumbleMsg {
             MumbleMsg::BanList(_) => MumbleType::BanList,
             MumbleMsg::TextMessage(_) => MumbleType::TextMessage,
             MumbleMsg::PermissionDenied(_) => MumbleType::PermissionDenied,
-            MumbleMsg::ACL(_) => MumbleType::ACL,
+            MumbleMsg::Acl(_) => MumbleType::Acl,
             MumbleMsg::QueryUsers(_) => MumbleType::QueryUsers,
             MumbleMsg::CryptSetup(_) => MumbleType::CryptSetup,
             MumbleMsg::ContextActionModify(_) => MumbleType::ContextActionModify,
@@ -217,7 +217,7 @@ impl MumbleMsg {
             MumbleMsg::BanList(ban_list) => ban_list.encode_to_vec(),
             MumbleMsg::TextMessage(text_message) => text_message.encode_to_vec(),
             MumbleMsg::PermissionDenied(permission_denied) => permission_denied.encode_to_vec(),
-            MumbleMsg::ACL(acl) => acl.encode_to_vec(),
+            MumbleMsg::Acl(acl) => acl.encode_to_vec(),
             MumbleMsg::QueryUsers(query_users) => query_users.encode_to_vec(),
             MumbleMsg::CryptSetup(crypt_setup) => crypt_setup.encode_to_vec(),
             MumbleMsg::ContextActionModify(context_action_modify) => {
@@ -260,7 +260,7 @@ impl MumbleMsg {
             MumbleType::PermissionDenied => {
                 MumbleMsg::PermissionDenied(mumble_proto::PermissionDenied::decode(buf)?)
             }
-            MumbleType::ACL => MumbleMsg::ACL(mumble_proto::Acl::decode(buf)?),
+            MumbleType::Acl => MumbleMsg::Acl(mumble_proto::Acl::decode(buf)?),
             MumbleType::QueryUsers => MumbleMsg::QueryUsers(mumble_proto::QueryUsers::decode(buf)?),
             MumbleType::CryptSetup => MumbleMsg::CryptSetup(mumble_proto::CryptSetup::decode(buf)?),
             MumbleType::ContextActionModify => {

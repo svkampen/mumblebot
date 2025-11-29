@@ -8,10 +8,10 @@ use tokio::{
     sync::mpsc,
 };
 
+use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
-use tokio_rustls::TlsConnector;
 
 use crate::{
     mumble_proto,
@@ -39,11 +39,13 @@ async fn read_message(stream: &mut ReadStream) -> anyhow::Result<MumbleMsg> {
 }
 
 async fn send_version(out: &mut MumbleMsgSink) -> anyhow::Result<()> {
-    let mut our_version = mumble_proto::Version::default();
-    our_version.release = Some("MumbleBot".into());
-    our_version.os = Some("Linux".into());
-    // we report version 1.4.0
-    our_version.version_v2 = Some(0x0001000400000000);
+    let our_version = mumble_proto::Version {
+        os: Some("Linux".into()),
+        release: Some("MumbleBot".into()),
+        // we report version 1.4.0
+        version_v2: Some(0x0001000400000000),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::Version(our_version)).await?;
 
@@ -51,10 +53,12 @@ async fn send_version(out: &mut MumbleMsgSink) -> anyhow::Result<()> {
 }
 
 async fn send_auth(out: &mut MumbleMsgSink, cfg: &Config) -> anyhow::Result<()> {
-    let mut our_auth = mumble_proto::Authenticate::default();
-    our_auth.client_type = Some(1); // BOT
-    our_auth.opus = Some(true);
-    our_auth.username = Some(cfg.username.clone());
+    let our_auth = mumble_proto::Authenticate {
+        client_type: Some(1), // BOT
+        opus: Some(true),
+        username: Some(cfg.username.clone()),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::Authenticate(our_auth)).await?;
 
@@ -62,9 +66,11 @@ async fn send_auth(out: &mut MumbleMsgSink, cfg: &Config) -> anyhow::Result<()> 
 }
 
 pub async fn send_text_message(out: &MumbleMsgSink, text: impl Into<String>) -> anyhow::Result<()> {
-    let mut msg = mumble_proto::TextMessage::default();
-    msg.channel_id = vec![0];
-    msg.message = text.into();
+    let msg = mumble_proto::TextMessage {
+        channel_id: vec![0],
+        message: text.into(),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::TextMessage(msg)).await?;
 
@@ -98,7 +104,7 @@ async fn mumblemsg_sender_task(
             }
             res = channel.recv() => {
                 ping_interval.reset();
-                res.unwrap()
+                res.expect("MumbleMsg channel should not be closed")
             }
         };
 
@@ -124,7 +130,7 @@ async fn mumblemsg_sender_task(
 
             stream.write_all(&audio_data).await?;
 
-            packet_sequence_nr = packet_sequence_nr + 1;
+            packet_sequence_nr += 1;
         } else {
             let tag = msg.tag();
             let data = msg.as_data();
@@ -155,7 +161,7 @@ async fn connect(server_name: &str, port: u16) -> anyhow::Result<(ReadStream, Wr
         .with_client_auth_cert(cert_chain, key_der)?;
     let connector = TlsConnector::from(Arc::new(config));
 
-    let dnsname = ServerName::try_from(String::from(server_name)).unwrap();
+    let dnsname = ServerName::try_from(String::from(server_name))?;
 
     let url_with_port = format!("{}:{}", server_name, port);
     let stream = TcpStream::connect(url_with_port).await?;
@@ -173,7 +179,7 @@ pub async fn init(cfg: &Config) -> anyhow::Result<(MumbleMsgSink, MumbleMsgSourc
     tokio::spawn(mumblemsg_sender_task(msg_out_rd, wr));
 
     send_version(&mut msg_out_wr).await?;
-    send_auth(&mut msg_out_wr, &cfg).await?;
+    send_auth(&mut msg_out_wr, cfg).await?;
 
     let (msg_sink, msg_source) = mpsc::channel(16);
 

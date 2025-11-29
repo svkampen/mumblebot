@@ -1,8 +1,8 @@
 mod resampling_sink;
 
-use futures::{pin_mut, TryStreamExt};
+use futures::TryStreamExt;
 use librespot::{
-    core::{cache::Cache, Session, SessionConfig, SpotifyId},
+    core::{Session, SessionConfig, SpotifyId, cache::Cache},
     discovery::Credentials,
     playback::{config::PlayerConfig, mixer::NoOpVolume, player::Player},
 };
@@ -42,22 +42,22 @@ async fn get_rspotify_session(config: &Config) -> anyhow::Result<rspotify::Clien
     Ok(spot)
 }
 
-impl Into<Song> for rspotify::model::FullTrack {
-    fn into(self) -> Song {
+impl From<rspotify::model::FullTrack> for Song {
+    fn from(val: rspotify::model::FullTrack) -> Self {
         Song {
-            name: format!("{} - {}", self.artists[0].name, self.name),
-            id: self.id.unwrap().uri(),
-            song_type: crate::types::SongType::SPOTIFY,
+            name: format!("{} - {}", val.artists[0].name, val.name),
+            id: val.id.expect("Non-local track should have an ID").uri(),
+            song_type: crate::types::SongType::Spotify,
         }
     }
 }
 
-impl Into<Song> for rspotify::model::SimplifiedTrack {
-    fn into(self) -> Song {
+impl From<rspotify::model::SimplifiedTrack> for Song {
+    fn from(val: rspotify::model::SimplifiedTrack) -> Self {
         Song {
-            name: format!("{} - {}", self.artists[0].name, self.name),
-            id: self.id.unwrap().uri(),
-            song_type: crate::types::SongType::SPOTIFY,
+            name: format!("{} - {}", val.artists[0].name, val.name),
+            id: val.id.expect("Non-local track should have an ID").uri(),
+            song_type: crate::types::SongType::Spotify,
         }
     }
 }
@@ -102,8 +102,7 @@ pub async fn get_playlist_tracks_by_id(
 ) -> anyhow::Result<Vec<Song>> {
     let spot = get_rspotify_session(config).await?;
 
-    let playlist_info = spot.playlist_items(PlaylistId::from_uri(playlist_uri)?, None, None);
-    pin_mut!(playlist_info);
+    let mut playlist_info = spot.playlist_items(PlaylistId::from_uri(playlist_uri)?, None, None);
 
     let mut tracks = vec![];
 
@@ -119,8 +118,7 @@ pub async fn get_playlist_tracks_by_id(
 pub async fn get_album_tracks_by_id(config: &Config, album_uri: &str) -> anyhow::Result<Vec<Song>> {
     let spot = get_rspotify_session(config).await?;
 
-    let album_info = spot.album_track(AlbumId::from_uri(album_uri)?, None);
-    pin_mut!(album_info);
+    let mut album_info = spot.album_track(AlbumId::from_uri(album_uri)?, None);
 
     let mut tracks = vec![];
 
@@ -136,7 +134,9 @@ async fn get_session() -> Session {
 
     let scopes = vec!["streaming"];
 
-    let cache = Cache::new(Some(PathBuf::from(".cache")), None, None, None).unwrap();
+    let cache = Cache::new(Some(PathBuf::from(".cache")), None, None, None)
+        .expect("Should be able to construct cache");
+
     let creds = match cache.credentials() {
         Some(creds) => creds,
         None => {
@@ -164,7 +164,7 @@ async fn get_session() -> Session {
         .await
         .expect("Connection to Spotify servers");
 
-    return session;
+    session
 }
 
 pub async fn play_song(

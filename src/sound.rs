@@ -4,9 +4,8 @@ use anyhow::Ok;
 use log::{debug, info};
 use opus::{Application, Channels, Encoder};
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     task::JoinHandle,
-    time::MissedTickBehavior,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -78,7 +77,7 @@ impl AudioSender {
             if let Some(ct) = lg.cancel_tok.as_ref() {
                 ct.cancel();
             }
-            std::mem::replace(&mut lg.task, None)
+            lg.task.take()
         };
 
         if let Some(task) = task {
@@ -107,7 +106,12 @@ impl AudioSender {
         {
             let mut data = data.lock().await;
             while data.buf.len() < 48_000 * 30 * 2 {
-                let chunk = data.source.as_mut().unwrap().recv().await;
+                let chunk = data
+                    .source
+                    .as_mut()
+                    .expect("Source should be set when send_task runs")
+                    .recv()
+                    .await;
 
                 if let Some(chunk) = chunk {
                     data.buf.extend(chunk);
@@ -133,7 +137,13 @@ impl AudioSender {
             let mut data = data.lock().await;
 
             while data.buf.len() < SAMPLES_PER_FRAME {
-                if let Some(chunk) = data.source.as_mut().unwrap().recv().await {
+                if let Some(chunk) = data
+                    .source
+                    .as_mut()
+                    .expect("Source should be set when send_task runs")
+                    .recv()
+                    .await
+                {
                     data.buf.extend(chunk);
                 } else {
                     break 'outer;

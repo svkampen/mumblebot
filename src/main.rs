@@ -1,3 +1,4 @@
+#![warn(clippy::unwrap_used)]
 mod net;
 mod sound;
 mod spotify;
@@ -5,12 +6,11 @@ mod types;
 
 use librespot::core::SpotifyId;
 use log::{debug, info};
-use rspotify::model::Id;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 use tokio_rustls::rustls;
 use tokio_util::sync::CancellationToken;
-use types::{Config, MumbleMsg, PlayerAction, Song};
+use types::{Config, MumbleMsg, PlayerAction};
 
 pub mod mumble_proto {
     include!(concat!(env!("OUT_DIR"), "/mumble_proto.rs"));
@@ -49,8 +49,7 @@ async fn player_task(
 
     loop {
         tokio::select! {
-            action = queue_recv.recv() => {
-                let action = action.unwrap();
+            Some(action) = queue_recv.recv() => {
                 match action {
                     PlayerAction::PlaySong(song) => {
                         if state == PlayerState::Playing
@@ -120,16 +119,17 @@ async fn player_task(
             }
         }
 
-        if state == PlayerState::Ready && !queue.is_empty() {
+        if state == PlayerState::Ready
+            && let Some(song) = queue.pop_front()
+        {
             debug!("Starting new song playback...");
-            let song = queue.pop_front().unwrap();
 
             net::send_text_message(&msg_sender, format!("Playing song: {}", song.name)).await?;
 
             let (sink, source) = mpsc::channel(32);
 
             tokio::spawn(spotify::play_song(
-                SpotifyId::from_uri(&song.id).unwrap(),
+                SpotifyId::from_uri(&song.id).expect("Song should have correct Spotify URI"),
                 sink,
                 cancel_tok.clone(),
             ));
@@ -181,23 +181,19 @@ async fn handle_message(
                 ".sp" => {
                     let arg = tag_stripper(arg);
                     if !arg.is_empty() {
-                        let song = if arg.starts_with(SPOTIFY_TRACK_URL_BASE) {
-                            let rest = &arg[SPOTIFY_TRACK_URL_BASE.len()..];
+                        let song = match arg.strip_prefix(SPOTIFY_TRACK_URL_BASE) {
+                            Some(rest) => {
+                                // SAFETY: split always yields at least one part.
+                                let track_id = rest.split('?').next().unwrap();
 
-                            let track_id = if let Some(idx) = rest.find('?') {
-                                &rest[..idx]
-                            } else {
-                                rest
-                            };
+                                let uri = format!("spotify:track:{}", track_id);
+                                debug!("Loading track by URI: {}", uri);
 
-                            let uri = format!("spotify:track:{}", track_id);
-                            debug!("Loading track by URI: {}", uri);
+                                let song = spotify::get_track_by_id(cfg, &uri).await?;
 
-                            let song = spotify::get_track_by_id(cfg, &uri).await?;
-
-                            Some(song)
-                        } else {
-                            spotify::search_song(cfg, &arg).await?.first().cloned()
+                                Some(song)
+                            }
+                            None => spotify::search_song(cfg, &arg).await?.first().cloned(),
                         };
 
                         if let Some(song) = song {
@@ -207,12 +203,9 @@ async fn handle_message(
                 }
                 ".spplaylist" => {
                     let arg = tag_stripper(arg);
-                    if arg.starts_with(SPOTIFY_PLAYLIST_URL_BASE) {
-                        let playlist_id = if let Some(idx) = arg.find('?') {
-                            &arg[SPOTIFY_PLAYLIST_URL_BASE.len()..idx]
-                        } else {
-                            &arg[SPOTIFY_PLAYLIST_URL_BASE.len()..]
-                        };
+                    if let Some(rest) = arg.strip_prefix(SPOTIFY_PLAYLIST_URL_BASE) {
+                        // SAFETY: split always yields at least one part.
+                        let playlist_id = rest.split('?').next().unwrap();
 
                         let uri = format!("spotify:playlist:{}", playlist_id);
                         debug!("Loading tracks in playlist: {}", uri);
@@ -248,13 +241,8 @@ async fn handle_message(
                 }
             }
         }
-    } else {
-        match msg {
-            MumbleMsg::ServerSync(_) => {
-                info!("ServerSync received, connected to server.");
-            }
-            _ => {}
-        }
+    } else if let MumbleMsg::ServerSync(_) = msg {
+        info!("ServerSync received, connected to server.");
     }
 
     Ok(())
@@ -264,11 +252,11 @@ async fn handle_message(
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
-        .unwrap();
+        .expect("Should be able to set aws-lc-rs as the default crypto provider");
 
-    let cfg = load_config("config.json").expect("config file");
+    let cfg = load_config("config.json").expect("There should be a config file");
 
     let (msg_sender, mut msg_receiver) = net::init(&cfg).await?;
 
@@ -279,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
     'outer: loop {
         tokio::select! {
             res = &mut player_handle => {
-                res.unwrap()?;
+                res??;
                 break 'outer;
             }
             msg = msg_receiver.recv() => {
