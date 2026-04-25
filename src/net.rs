@@ -1,17 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use num_traits::FromPrimitive;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc,
+    time::sleep,
 };
 
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     mumble_proto,
@@ -39,11 +41,13 @@ async fn read_message(stream: &mut ReadStream) -> anyhow::Result<MumbleMsg> {
 }
 
 async fn send_version(out: &mut MumbleMsgSink) -> anyhow::Result<()> {
-    let mut our_version = mumble_proto::Version::default();
-    our_version.release = Some("MumbleBot".into());
-    our_version.os = Some("Linux".into());
-    // we report version 1.4.0
-    our_version.version_v2 = Some(0x0001000400000000);
+    let our_version = mumble_proto::Version {
+        release: Some("MumbleBot".into()),
+        os: Some("Linux".into()),
+        // we report version 1.4.0
+        version_v2: Some(0x0001000400000000),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::Version(our_version)).await?;
 
@@ -51,10 +55,12 @@ async fn send_version(out: &mut MumbleMsgSink) -> anyhow::Result<()> {
 }
 
 async fn send_auth(out: &mut MumbleMsgSink, cfg: &Config) -> anyhow::Result<()> {
-    let mut our_auth = mumble_proto::Authenticate::default();
-    our_auth.client_type = Some(1); // BOT
-    our_auth.opus = Some(true);
-    our_auth.username = Some(cfg.username.clone());
+    let our_auth = mumble_proto::Authenticate {
+        client_type: Some(1), // BOT
+        opus: Some(true),
+        username: Some(cfg.username.clone()),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::Authenticate(our_auth)).await?;
 
@@ -62,31 +68,95 @@ async fn send_auth(out: &mut MumbleMsgSink, cfg: &Config) -> anyhow::Result<()> 
 }
 
 pub async fn send_text_message(out: &MumbleMsgSink, text: impl Into<String>) -> anyhow::Result<()> {
-    let mut msg = mumble_proto::TextMessage::default();
-    msg.channel_id = vec![0];
-    msg.message = text.into();
+    let msg = mumble_proto::TextMessage {
+        channel_id: vec![0],
+        message: text.into(),
+        ..Default::default()
+    };
 
     out.send(MumbleMsg::TextMessage(msg)).await?;
 
     Ok(())
 }
 
-async fn read_task(mut stream: ReadStream, channel: mpsc::Sender<MumbleMsg>) -> anyhow::Result<()> {
+async fn receiver_task(
+    mut stream: ReadStream,
+    channel: mpsc::Sender<MumbleMsg>,
+    ct: CancellationToken,
+) -> mpsc::Sender<MumbleMsg> {
     loop {
-        let msg = read_message(&mut stream).await?;
-        debug!("Received message from server: {:?}", msg);
+        let msg = tokio::select! {
+            msg = read_message(&mut stream) => {
+                msg
+            },
+            _ = ct.cancelled() => {
+                break
+            }
+        };
+        let res = match msg {
+            Ok(msg) => {
+                debug!("Received message from server: {:?}", msg);
+                channel.send(msg).await
+            }
+            Err(e) => {
+                warn!("Error reading from server: {:?}", e);
+                break;
+            }
+        };
 
-        channel.send(msg).await?;
+        if res.is_err() {
+            break;
+        }
     }
+
+    channel
+}
+
+async fn try_send_voice_data(
+    stream: &mut WriteStream,
+    seq_nr: u64,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    let seq_nr_encoded = types::varint_encode(seq_nr);
+    let len_encoded = types::varint_encode(data.len() as u64);
+
+    let total_packet_len = 1 + seq_nr_encoded.len() + len_encoded.len() + data.len();
+
+    stream.write_u16(MumbleType::UDPTunnel as u16).await?;
+    stream.write_u32(total_packet_len as u32).await?;
+
+    stream.write_u8(128).await?; // type + target
+
+    stream.write_all(&seq_nr_encoded).await?;
+    stream.write_all(&len_encoded).await?;
+
+    stream.write_all(data).await?;
+
+    Ok(())
+}
+
+async fn try_send_msg(stream: &mut WriteStream, msg: &MumbleMsg) -> anyhow::Result<()> {
+    let tag = msg.tag();
+    let data = msg.as_data();
+    debug!("Sending message: {:?} {:?}", tag, data);
+
+    stream.write_u16(tag as u16).await?;
+
+    stream.write_u32(data.len() as u32).await?;
+    stream.write_all(&data).await?;
+
+    Ok(())
 }
 
 /**
  * Task that sends encoded MumbleMsgs over the wire.
+ * The task returns the MumbleMsg receiver channel on exiting so it can be reused.
  */
-async fn mumblemsg_sender_task(
-    mut channel: tokio::sync::mpsc::Receiver<MumbleMsg>,
+async fn sender_task(
     mut stream: WriteStream,
-) -> anyhow::Result<()> {
+    mut channel: mpsc::Receiver<MumbleMsg>,
+    ct: CancellationToken,
+) -> mpsc::Receiver<MumbleMsg> {
     let mut packet_sequence_nr: u64 = 0;
 
     let mut ping_interval = tokio::time::interval(Duration::from_secs(15));
@@ -98,7 +168,13 @@ async fn mumblemsg_sender_task(
             }
             res = channel.recv() => {
                 ping_interval.reset();
-                res.unwrap()
+                match res {
+                    Some(res) => res,
+                    None => break
+                }
+            }
+            _ = ct.cancelled() => {
+                break
             }
         };
 
@@ -109,33 +185,21 @@ async fn mumblemsg_sender_task(
                 audio_data.len()
             );
 
-            let seq_nr_encoded = types::varint_encode(packet_sequence_nr);
-            let len_encoded = types::varint_encode(audio_data.len() as u64);
+            let res = try_send_voice_data(&mut stream, packet_sequence_nr, &audio_data).await;
+            if res.is_err() {
+                break;
+            }
 
-            let total_packet_len = 1 + seq_nr_encoded.len() + len_encoded.len() + audio_data.len();
-
-            stream.write_u16(MumbleType::UDPTunnel as u16).await?;
-            stream.write_u32(total_packet_len as u32).await?;
-
-            stream.write_u8(128).await?; // type + target
-
-            stream.write_all(&seq_nr_encoded).await?;
-            stream.write_all(&len_encoded).await?;
-
-            stream.write_all(&audio_data).await?;
-
-            packet_sequence_nr = packet_sequence_nr + 1;
+            packet_sequence_nr += 1;
         } else {
-            let tag = msg.tag();
-            let data = msg.as_data();
-            debug!("Sending message: {:?} {:?}", tag, data);
-
-            stream.write_u16(tag as u16).await?;
-
-            stream.write_u32(data.len() as u32).await?;
-            stream.write_all(&data).await?;
+            let res = try_send_msg(&mut stream, &msg).await;
+            if res.is_err() {
+                break;
+            }
         }
     }
+
+    channel
 }
 
 /**
@@ -164,20 +228,65 @@ async fn connect(server_name: &str, port: u16) -> anyhow::Result<(ReadStream, Wr
     Ok(tokio::io::split(tls_stream))
 }
 
-pub async fn init(cfg: &Config) -> anyhow::Result<(MumbleMsgSink, MumbleMsgSource)> {
+async fn reconnect_task(
+    cfg: Config,
+    mut sender_rd: mpsc::Receiver<MumbleMsg>,
+    mut sender_wr: mpsc::Sender<MumbleMsg>,
+    mut receiver_wr: mpsc::Sender<MumbleMsg>,
+) {
+    let mut sender_handle;
+    let mut receiver_handle;
+    let mut ct;
+
+    loop {
+        let (net_rd, net_wr) = loop {
+            match connect(&cfg.host, cfg.port).await {
+                Ok(res) => break res,
+                Err(e) => {
+                    warn!("Failed to connect (error {:?}), waiting a minute...", e);
+                    sleep(Duration::from_mins(1)).await
+                }
+            }
+        };
+
+        ct = CancellationToken::new();
+
+        sender_handle = tokio::spawn(sender_task(net_wr, sender_rd, ct.child_token()));
+
+        receiver_handle = tokio::spawn(receiver_task(net_rd, receiver_wr, ct.child_token()));
+
+        send_version(&mut sender_wr)
+            .await
+            .expect("able to put msg in channel");
+
+        send_auth(&mut sender_wr, &cfg)
+            .await
+            .expect("able to put msg in channel");
+
+        (sender_rd, receiver_wr) = tokio::select! {
+            wr_chan = &mut sender_handle => {
+                ct.cancel();
+                let rd_chan = receiver_handle.await;
+                (wr_chan.expect("no panic in write task"), rd_chan.expect("no error in read task"))
+            },
+            rd_chan = &mut receiver_handle => {
+                ct.cancel();
+                let wr_chan = sender_handle.await;
+                (wr_chan.expect("no panic in write task"), rd_chan.expect("no error in read task"))
+            }
+        };
+    }
+}
+
+pub async fn init(cfg: Config) -> anyhow::Result<(MumbleMsgSink, MumbleMsgSource)> {
     info!("Connecting...");
 
-    let (rd, wr) = connect(&cfg.host, cfg.port).await?;
-    let (mut msg_out_wr, msg_out_rd) = tokio::sync::mpsc::channel::<types::MumbleMsg>(10);
+    let (sender_wr, sender_rd) = mpsc::channel(16);
+    let (receiver_wr, receiver_rd) = mpsc::channel(16);
 
-    tokio::spawn(mumblemsg_sender_task(msg_out_rd, wr));
+    let sender_wr2 = sender_wr.clone();
 
-    send_version(&mut msg_out_wr).await?;
-    send_auth(&mut msg_out_wr, &cfg).await?;
+    tokio::spawn(reconnect_task(cfg, sender_rd, sender_wr2, receiver_wr));
 
-    let (msg_sink, msg_source) = mpsc::channel(16);
-
-    tokio::spawn(read_task(rd, msg_sink));
-
-    Ok((msg_out_wr, msg_source))
+    Ok((sender_wr, receiver_rd))
 }

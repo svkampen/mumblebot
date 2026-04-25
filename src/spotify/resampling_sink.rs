@@ -1,7 +1,7 @@
 use librespot::playback::audio_backend::{Sink, SinkError};
 use librespot::playback::convert::Converter;
 use librespot::playback::decoder::{AudioPacket, AudioPacketError};
-use log::{debug, info};
+use log::debug;
 use rubato::{FftFixedIn, Resampler};
 use strided::Stride;
 use tokio::runtime::Handle;
@@ -50,7 +50,7 @@ fn get_striated_samples(data: &[f64]) -> Vec<Vec<f64>> {
 fn to_interleaved_samples(data: &[Vec<f64>], out_frames: usize) -> Vec<i16> {
     let mut interleaved_samples: Vec<i16> = vec![];
 
-    let f64_to_i16 = |x: f64| ((x * (i16::MAX - 1) as f64) as i16);
+    let f64_to_i16 = |x: f64| (x * (i16::MAX - 1) as f64) as i16;
 
     for n in 0..(CHANNELS * out_frames) {
         let sample = data[n % CHANNELS][n / CHANNELS];
@@ -107,14 +107,14 @@ impl Sink for ResamplingSink {
                 .process_into_buffer(&striated_chunk, &mut self.out_buffer, None)
                 .unwrap();
 
-            processed_data.extend(to_interleaved_samples(&mut self.out_buffer, out_frames));
+            processed_data.extend(to_interleaved_samples(&self.out_buffer, out_frames));
 
             assert_eq!(in_frames * CHANNELS, required_samples);
 
             required_samples = self.resampler.input_frames_next() * CHANNELS;
         }
 
-        if processed_data.len() == 0 {
+        if processed_data.is_empty() {
             return Ok(());
         }
 

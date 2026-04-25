@@ -42,22 +42,22 @@ async fn get_rspotify_session(config: &Config) -> anyhow::Result<rspotify::Clien
     Ok(spot)
 }
 
-impl Into<Song> for rspotify::model::FullTrack {
-    fn into(self) -> Song {
+impl From<rspotify::model::FullTrack> for Song {
+    fn from(val: rspotify::model::FullTrack) -> Self {
         Song {
-            name: format!("{} - {}", self.artists[0].name, self.name),
-            id: self.id.unwrap().uri(),
-            song_type: crate::types::SongType::SPOTIFY,
+            name: format!("{} - {}", val.artists[0].name, val.name),
+            id: val.id.unwrap().uri(),
+            song_type: crate::types::SongType::Spotify,
         }
     }
 }
 
-impl Into<Song> for rspotify::model::SimplifiedTrack {
-    fn into(self) -> Song {
+impl From<rspotify::model::SimplifiedTrack> for Song {
+    fn from(val: rspotify::model::SimplifiedTrack) -> Self {
         Song {
-            name: format!("{} - {}", self.artists[0].name, self.name),
-            id: self.id.unwrap().uri(),
-            song_type: crate::types::SongType::SPOTIFY,
+            name: format!("{} - {}", val.artists[0].name, val.name),
+            id: val.id.unwrap().uri(),
+            song_type: crate::types::SongType::Spotify,
         }
     }
 }
@@ -164,7 +164,7 @@ async fn get_session() -> Session {
         .await
         .expect("Connection to Spotify servers");
 
-    return session;
+    session
 }
 
 pub async fn play_song(

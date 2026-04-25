@@ -6,7 +6,6 @@ use opus::{Application, Channels, Encoder};
 use tokio::{
     sync::{mpsc, Mutex},
     task::JoinHandle,
-    time::MissedTickBehavior,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -78,7 +77,7 @@ impl AudioSender {
             if let Some(ct) = lg.cancel_tok.as_ref() {
                 ct.cancel();
             }
-            std::mem::replace(&mut lg.task, None)
+            lg.task.take()
         };
 
         if let Some(task) = task {

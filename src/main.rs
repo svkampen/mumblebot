@@ -5,12 +5,11 @@ mod types;
 
 use librespot::core::SpotifyUri;
 use log::{debug, info};
-use rspotify::model::Id;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 use tokio_rustls::rustls;
 use tokio_util::sync::CancellationToken;
-use types::{Config, MumbleMsg, PlayerAction, Song};
+use types::{Config, MumbleMsg, PlayerAction};
 
 pub mod mumble_proto {
     include!(concat!(env!("OUT_DIR"), "/mumble_proto.rs"));
@@ -248,13 +247,8 @@ async fn handle_message(
                 }
             }
         }
-    } else {
-        match msg {
-            MumbleMsg::ServerSync(_) => {
-                info!("ServerSync received, connected to server.");
-            }
-            _ => {}
-        }
+    } else if let MumbleMsg::ServerSync(_) = msg {
+        info!("ServerSync received, connected to server.");
     }
 
     Ok(())
@@ -264,13 +258,13 @@ async fn handle_message(
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .unwrap();
 
     let cfg = load_config("config.json").expect("config file");
 
-    let (msg_sender, mut msg_receiver) = net::init(&cfg).await?;
+    let (msg_sender, mut msg_receiver) = net::init(cfg.clone()).await?;
 
     let (queue_sink, queue_source) = mpsc::channel(1);
 
