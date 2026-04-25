@@ -3,7 +3,7 @@ mod sound;
 mod spotify;
 mod types;
 
-use librespot::core::SpotifyId;
+use librespot::core::SpotifyUri;
 use log::{debug, info};
 use rspotify::model::Id;
 use std::collections::VecDeque;
@@ -129,7 +129,7 @@ async fn player_task(
             let (sink, source) = mpsc::channel(32);
 
             tokio::spawn(spotify::play_song(
-                SpotifyId::from_uri(&song.id).unwrap(),
+                SpotifyUri::from_uri(&song.id).unwrap(),
                 sink,
                 cancel_tok.clone(),
             ));

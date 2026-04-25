@@ -2,7 +2,7 @@ mod resampling_sink;
 
 use futures::{pin_mut, TryStreamExt};
 use librespot::{
-    core::{cache::Cache, Session, SessionConfig, SpotifyId},
+    core::{cache::Cache, Session, SessionConfig, SpotifyUri},
     discovery::Credentials,
     playback::{config::PlayerConfig, mixer::NoOpVolume, player::Player},
 };
@@ -168,7 +168,7 @@ async fn get_session() -> Session {
 }
 
 pub async fn play_song(
-    song: SpotifyId,
+    song: SpotifyUri,
     sink: mpsc::Sender<Vec<i16>>,
     cancel_tok: CancellationToken,
 ) {
