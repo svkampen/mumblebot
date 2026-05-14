@@ -33,6 +33,7 @@ pub enum PlayerAction {
 #[derive(Debug, Clone)]
 pub enum SongType {
     Spotify,
+    YouTube,
 }
 
 #[derive(Debug, Clone)]

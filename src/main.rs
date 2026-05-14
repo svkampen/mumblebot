@@ -2,6 +2,7 @@ mod net;
 mod sound;
 mod spotify;
 mod types;
+mod youtube;
 
 use librespot::core::SpotifyUri;
 use log::{debug, info};
@@ -10,6 +11,8 @@ use tokio::sync::mpsc;
 use tokio_rustls::rustls;
 use tokio_util::sync::CancellationToken;
 use types::{Config, MumbleMsg, PlayerAction};
+
+use crate::types::{Song, SongType};
 
 pub mod mumble_proto {
     include!(concat!(env!("OUT_DIR"), "/mumble_proto.rs"));
@@ -127,11 +130,18 @@ async fn player_task(
 
             let (sink, source) = mpsc::channel(32);
 
-            tokio::spawn(spotify::play_song(
-                SpotifyUri::from_uri(&song.id).unwrap(),
-                sink,
-                cancel_tok.clone(),
-            ));
+            match song.song_type {
+                SongType::Spotify => {
+                    tokio::spawn(spotify::play_song(
+                        SpotifyUri::from_uri(&song.id).unwrap(),
+                        sink,
+                        cancel_tok.clone(),
+                    ));
+                }
+                SongType::YouTube => {
+                    tokio::spawn(youtube::stream_url(song.id, sink, cancel_tok.clone()));
+                }
+            }
 
             streamer.start(source).await?;
 
@@ -234,6 +244,22 @@ async fn handle_message(
                 }
                 ".resume" => {
                     queue_sink.send(PlayerAction::Resume).await?;
+                }
+                ".yt" => {
+                    let arg = tag_stripper(arg);
+
+                    match youtube::get_title(&arg).await {
+                        Err(e) => debug!("Failed to load title for YouTube URL '{}': {:?}", arg, e),
+                        Ok(name) => {
+                            let song = Song {
+                                name,
+                                id: arg,
+                                song_type: SongType::YouTube,
+                            };
+
+                            queue_sink.send(PlayerAction::PlaySong(song)).await?;
+                        }
+                    }
                 }
                 ".v" => {
                     if let Ok(v) = arg.parse::<u8>() {
